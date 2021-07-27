@@ -17,10 +17,20 @@ namespace ChatQuickstart
 {
     class Program
     {
+        /// <summary>
+        /// Config pulls values from Environment variables for use at runtime.
+        /// 
+        /// For example, the variables expected for PROD
+        /// PROD_ACS_RESOURCE_ENDPOINT - The endpoint (url) of the ACS resource
+        /// PROD_ACS_RESOURCE_CONNECTION_STRING - The connection string for the ACS resource
+        /// PROD_STORAGEQUEUE_CONNECTION_STRING - The connection string for the storage queue
+        /// PROD_STORAGEQUEUE_NAME - The name of the storagequeue
+        /// </summary>
         class Config
         {
-            public static Config PROD = new Config("PROD");
             public static Config INT = new Config("INT");
+            public static Config PPE = new Config("PPE");
+            public static Config PROD = new Config("PROD");
 
             private Config(string prefix)
             {
@@ -35,7 +45,7 @@ namespace ChatQuickstart
 
         static async Task Main(string[] args)
         {
-            var config = Config.INT;
+            var config = Config.PPE;
             uint participantCount = 2;
             Uri endpoint = new Uri(config.ACSResourceEndpoint);
 
@@ -63,6 +73,8 @@ namespace ChatQuickstart
             // <Send a message to a chat thread>
             SendChatMessageResult sendChatMessageResult = await chatThreadClient.SendMessageAsync(new SendChatMessageOptions() { Content = string.Empty, Metadata = { { "contentType", "image/jpeg" }, { "fileName", "cat.jpg" } }, MessageType = ChatMessageType.Text, SenderDisplayName = sender.DisplayName});
             string sentMessageId = sendChatMessageResult.Id;
+            Console.WriteLine($"Sent a message at approx {DateTime.Now}, id: {sentMessageId}");
+            
 
             // <Receive chat messages from a chat thread>
             Console.WriteLine($"Getting messages for thread");
