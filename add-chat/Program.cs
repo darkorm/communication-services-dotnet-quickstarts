@@ -36,23 +36,56 @@ namespace ChatQuickstart
             {
                 this.prefix = prefix;
             }
+
             readonly string prefix;
             public string ACSResourceEndpoint => Environment.GetEnvironmentVariable($"{prefix}_ACS_RESOURCE_ENDPOINT");
             public string ACSResourceConnectionString => Environment.GetEnvironmentVariable($"{prefix}_ACS_RESOURCE_CONNECTION_STRING");
             public string StorageQueueConnectionString => Environment.GetEnvironmentVariable($"{prefix}_STORAGEQUEUE_CONNECTION_STRING");
             public string StorageQueueName => Environment.GetEnvironmentVariable($"{prefix}_STORAGEQUEUE_NAME");
+
+            public void Print()
+            {
+                Console.WriteLine($"Config: {prefix}");
+                Console.WriteLine($"ACSResourceEndpoint {ACSResourceEndpoint}");
+                Console.WriteLine($"ACSResourceConnectionString {ACSResourceConnectionString}");
+                Console.WriteLine($"StorageQueueConnectionString {StorageQueueConnectionString}");
+                Console.WriteLine($"StorageQueueName {StorageQueueName}");
+            }
         }
 
         static async Task Main(string[] args)
         {
-            var config = Config.PPE;
+            var config = Config.PROD;
             uint participantCount = 2;
+            var queueSearchTimeout = TimeSpan.FromSeconds(30);
             Uri endpoint = new Uri(config.ACSResourceEndpoint);
+
+            config.Print();
 
             var storageQueueClient = new QueueClient(config.StorageQueueConnectionString, config.StorageQueueName);
             Console.WriteLine($"Using storage queue {config.StorageQueueName}");
-            Console.WriteLine($"Clearing queue of approx {storageQueueClient.GetPropertiesAsync().Result.Value.ApproximateMessagesCount} messages");
-            storageQueueClient.ClearMessages();
+            var clearQueueComplete = false;
+            while (!clearQueueComplete)
+            {
+                try
+                {
+                    Console.WriteLine($"Clearing queue of approx {storageQueueClient.GetPropertiesAsync().Result.Value.ApproximateMessagesCount} messages");
+                    var result = storageQueueClient.ClearMessages();
+                    if ((result.Status >= 200) && (result.Status <= 299))
+                    {
+                        clearQueueComplete = true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Request returned with unexpected response: {result.Status}");
+                    }
+
+                }
+                catch (RequestFailedException ex)
+                {
+                    Console.WriteLine($"Request Failed: {ex.Message}");
+                }
+            }
 
             var identityClient = new CommunicationIdentityClient(config.ACSResourceConnectionString);
 
@@ -71,7 +104,7 @@ namespace ChatQuickstart
             ChatThreadClient chatThreadClient = chatClient.GetChatThreadClient(threadId: createChatThreadResult.ChatThread.Id);
 
             // <Send a message to a chat thread>
-            SendChatMessageResult sendChatMessageResult = await chatThreadClient.SendMessageAsync(new SendChatMessageOptions() { Content = string.Empty, Metadata = { { "contentType", "image/jpeg" }, { "fileName", "cat.jpg" } }, MessageType = ChatMessageType.Text, SenderDisplayName = sender.DisplayName});
+            SendChatMessageResult sendChatMessageResult = await chatThreadClient.SendMessageAsync(new SendChatMessageOptions() { Content = "message content", Metadata = { { "contentType", "image/jpeg" }, { "fileName", "cat.jpg" } }, MessageType = ChatMessageType.Text, SenderDisplayName = sender.DisplayName});
             string sentMessageId = sendChatMessageResult.Id;
             Console.WriteLine($"Sent a message at approx {DateTime.Now}, id: {sentMessageId}");
             
@@ -86,7 +119,7 @@ namespace ChatQuickstart
 
             // Verify messages made it to StorageQueue
             Console.WriteLine($"Checking storage queue for sent message");
-            var timeout = Task.Delay(TimeSpan.FromSeconds(20));
+            var timeout = Task.Delay(queueSearchTimeout);
 
             while (!timeout.IsCompleted)
             {
@@ -101,11 +134,14 @@ namespace ChatQuickstart
                         var parsedEvent = EventGridEvent.Parse(BinaryData.FromBytes(bodyBytes));
                         switch (parsedEvent.EventType)
                         {
+                            
                             case "Microsoft.Communication.ChatMessageReceived":
                                 var chatMessageReceived = parsedEvent.Data.ToObjectFromJson<AcsChatMessageReceivedEventData>();
                                 if (chatMessageReceived.MessageId == sentMessageId)
                                 {
-                                    Console.WriteLine($"> {parsedEvent.EventType}, Matching message {sentMessageId}, message={chatMessageReceived.MessageBody}, metadata={MetadataToString(chatMessageReceived.Metadata)}");
+                                    Console.ForegroundColor = ConsoleColor.Green;
+                                    Console.WriteLine($"> (Match) {parsedEvent.EventType}, {sentMessageId}, message={chatMessageReceived.MessageBody}, metadata={MetadataToString(chatMessageReceived.Metadata)}");
+                                    Console.ResetColor();
                                     break;
                                 }
                                 goto default;
@@ -113,12 +149,14 @@ namespace ChatQuickstart
                                 var chatMessageReceivedInThread = parsedEvent.Data.ToObjectFromJson<AcsChatMessageReceivedInThreadEventData>();
                                 if (chatMessageReceivedInThread.MessageId == sentMessageId)
                                 {
-                                    Console.WriteLine($"> {parsedEvent.EventType}, Matching message {sentMessageId}, message={chatMessageReceivedInThread.MessageBody}, metadata={MetadataToString(chatMessageReceivedInThread.Metadata)}");
+                                    Console.ForegroundColor = ConsoleColor.Green;
+                                    Console.WriteLine($"> (Match) {parsedEvent.EventType}, {sentMessageId}, message={chatMessageReceivedInThread.MessageBody}, metadata={MetadataToString(chatMessageReceivedInThread.Metadata)}");
+                                    Console.ResetColor();
                                     break;
                                 }
                                 goto default;
                             default:
-                                Console.WriteLine($"> {parsedEvent.EventType} (No Match)");
+                                Console.WriteLine($"> (No Match) {parsedEvent.EventType}");
                                 break;
                         }
 
@@ -128,9 +166,11 @@ namespace ChatQuickstart
                 else
                 {
                     Console.WriteLine($"> No messages received, waiting.");
-                    await Task.Delay(TimeSpan.FromSeconds(1));
+                    await Task.Delay(TimeSpan.FromSeconds(2));
                 }
             }
+
+            Console.WriteLine($"Done checking storage queue");
 
             await Cleanup(chatParticipants, identityClient);
         }
